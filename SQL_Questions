@@ -1,0 +1,128 @@
+select * from `precis_data.customers`
+limit 10;
+
+ALTER TABLE `precis_data.customers`
+RENAME COLUMN string_field_0 TO customer_id;
+ALTER TABLE `precis_data.customers`
+RENAME COLUMN string_field_1 TO customer_city;
+ALTER TABLE `precis_data.customers`
+RENAME COLUMN string_field_2 TO channel;
+
+select * from `precis_data.customers` limit 10;
+select distinct(customer_city)
+from `precis_data.customers`;
+#Oslo and Stockholm 
+select distinct(channel)
+from `precis_data.customers`;
+#Google, FB, Instagram
+select count(distinct customer_id) as customers, customer_city, channel
+from `precis_data.customers`
+group by 2,3
+order by 1 DESC;
+
+SELECT * FROM `precis_data.orders`
+LIMIT 10;
+SELECT * FROM `precis_data.payments`
+LIMIT 10;
+
+# -------- Question 1 : What are the top product categories for first time buyers? ---------
+
+select count(distinct customer_id) as customers, product_category_name
+from `precis_data.orders`
+where customer_id in 
+(select customer_id 
+from `precis_data.orders` 
+group by 1
+having min(order_purchase_timestamp)=max(order_purchase_timestamp))
+group by 2
+order by 1 DESC;
+#57,457
+# Spot check - d7fc82cbeafea77bd0a8fbbf6296e387 , 944b72539d7e1f7f7fc6e46639ef1fe3, d9442164acf4b03109425633efaa0cfc, c144f59368d920463bfa38944b893f1f
+select * from `precis_data.orders` where customer_id='c144f59368d920463bfa38944b893f1f';
+
+# -------- Question 2 : Customers with average payment value over 200 SEK ---------
+select distinct currency from `precis_data.payments`; #EUR only
+select distinct currency from `precis_data.orders`; #SEK
+
+select count(distinct customer_id) from `precis_data.orders`;
+#98,666
+
+create table `precis_data.q2` as 
+select customer_id, avg(payment_value) as avg_payment
+from `precis_data.orders` a
+join `precis_data.payments` b on a.order_id=b.order_id
+where a.currency = 'SEK'
+group by 1;
+#98,666
+select count(distinct customer_id)
+from `precis_data.q2`
+where avg_payment > 200;
+#30,930
+
+#spot check - d7fc82cbeafea77bd0a8fbbf6296e387,d9442164acf4b03109425633efaa0cfc, fc25e9ad5c4e1fd84faf0f1fadc8a5cf
+select a.*,b.*
+from `precis_data.orders` a
+join `precis_data.payments` b on a.order_id=b.order_id
+where customer_id='fc25e9ad5c4e1fd84faf0f1fadc8a5cf';
+
+
+# -------- Question 3 : Does the order value increase as the customers place more orders? ---------
+create table `precis_data.repeat_buyers` as #create tables of buyers with more than 1 purchases 
+select count(order_id) as orders, customer_id from `precis_data.orders` 
+group by 2
+having count(order_id)>1;
+#41,209
+
+select * from `precis_data.repeat_buyers`
+order by orders DESC;
+
+create table `precis_data.repeat_buyers_info` as #create table to gather repeat buyers' activity
+select a.*, b.order_id, b.order_purchase_timestamp, c.payment_value, b.product_category_name
+from `precis_data.repeat_buyers` a
+join `precis_data.orders` b on a.customer_id=b.customer_id
+join `precis_data.payments` c on b.order_id=c.order_id;
+
+select * from `precis_data.repeat_buyers_info` limit 10;
+
+create table `precis_data.temp` as #create table to find the difference in cost between each consecutive purchase
+SELECT  customer_id, 
+        payment_value,
+        order_purchase_timestamp,
+        payment_value - LAG(payment_value) OVER (PARTITION BY customer_id order by order_purchase_timestamp) as difference
+FROM `precis_data.repeat_buyers_info`;
+
+select * from `precis_data.temp` where customer_id='6722b211493615e10b66f7aba128121d';
+
+create table `precis_data.temp2` as #count the number of positive difference i.e cost increases after each consecutive purchase vs negative differences i.e cost decreases after each consecutive purchase
+select customer_id,
+sum(case when difference >0 then 1 else 0 end) as pos_amt,
+sum(case when difference < 0 then 1 else 0 end) as neg_amt
+from `precis_data.temp`
+group by customer_id;
+
+select sum(pos_amt), sum(neg_amt)
+from `precis_data.temp2`;
+# positives - 21,628
+# negatives - 29,892 since negative count is higher than positive, as a whole, no, the payment value does not increase the more customers buy
+
+# -------- Questions 4 : Given the top 5 product categories most commonly purchased by new customers, what product category should we cross-sell to new customers for each given category?
+
+SELECT product, c.bought_with
+FROM (
+  SELECT a.product_category_name as product, b.product_category_name as bought_with
+  FROM `precis_data.orders` a
+  INNER join `precis_data.orders` b ON a.order_id = b.order_id AND a.product_id != b.product_id) c
+GROUP BY c.product, c.bought_with
+#inconclusive 
+
+select * from `precis_data.orders` limit 10
+# -------- Connecting Insights to Activation
+# -------- 1. Audience Targeting
+
+create table `precis_data.audience` as
+select a.customer_id, a.customer_city, a.channel, c.payment_method, c.payment_value
+from `precis_data.customers` a
+join `precis_data.orders` b on a.customer_id=b.customer_id
+join `precis_data.payments` c on b.order_id=c.order_id;
+
+select * from `precis_data.audience`
